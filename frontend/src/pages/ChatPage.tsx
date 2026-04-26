@@ -1,8 +1,3 @@
-// ============================================================
-// ChatPage.tsx — Patient-facing chat interface
-// Renders the full-screen ChatWindow with useAgentChat hook
-// ============================================================
-
 import React from "react";
 import { ChatWindow } from "../components/chat/ChatWindow";
 import { useAgentChat } from "../hooks/useAgentChat";
@@ -17,9 +12,12 @@ const ChatPage: React.FC = () => {
   const chat = useAgentChat();
 
   return (
-    <div className="flex h-screen flex-col bg-gradient-to-br from-teal-50 via-white to-slate-100">
-      {/* Top nav bar */}
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3 shadow-sm z-10">
+    // overflow-hidden is the critical fix: h-screen sets the viewport height,
+    // overflow-hidden ensures nothing can push the layout taller than that.
+    // Without it, flex children can bleed past 100vh on some browsers.
+    <div className="flex h-screen flex-col overflow-hidden bg-gradient-to-br from-teal-50 via-white to-slate-100">
+      {/* Top nav bar — flex-shrink-0 so it never compresses */}
+      <header className="flex-shrink-0 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3 shadow-sm z-10">
         <div className="flex items-center gap-2">
           <span className="text-teal-600 font-bold text-lg tracking-tight">
             HealthSchedule
@@ -35,10 +33,10 @@ const ChatPage: React.FC = () => {
         </a>
       </header>
 
-      {/* Chat area */}
-      <main className="flex flex-1 overflow-hidden">
+      {/* main fills remaining height; overflow-hidden so children handle scroll */}
+      <main className="flex flex-1 overflow-hidden min-h-0">
         {/* Sidebar — desktop only */}
-        <aside className="hidden lg:flex flex-col w-72 border-r border-slate-200 bg-white p-6 gap-6">
+        <aside className="hidden lg:flex flex-col w-72 border-r border-slate-200 bg-white p-6 gap-6 overflow-y-auto">
           <div>
             <h2 className="text-sm font-semibold text-slate-700 mb-3">
               How it works
@@ -95,8 +93,8 @@ const ChatPage: React.FC = () => {
           </div>
         </aside>
 
-        {/* Chat */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Chat column — flex-1 with min-h-0 so it shrinks correctly */}
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
           <ChatWindow chat={chat} />
         </div>
       </main>
