@@ -1,18 +1,22 @@
 import React from "react";
 import type { ChatMessage, AvailableSlot } from "../../types/agent.types";
 import { SlotCards } from "./SlotCards";
-import { stripSlotLines } from "../../lib/slotParser";
+import {
+  stripSlotLines,
+  stripTherapistLines,
+  parseTherapists,
+  isTherapistListingMessage,
+  type ParsedTherapist,
+} from "../../lib/slotParser";
 
 interface MessageBubbleProps {
   message: ChatMessage;
   onSlotSelect?: (slot: AvailableSlot) => void;
-  onTherapistSelect?: (name: string) => void; // ✅ added
+  onTherapistSelect?: (name: string) => void;
   isLoading?: boolean;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Helpers (UNCHANGED)
-// ─────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────
 
 function formatTime(iso: string): string {
   try {
@@ -25,65 +29,69 @@ function formatTime(iso: string): string {
   }
 }
 
-function renderText(text: string) {
+/**
+ * Renders text with **bold** markdown → <strong> tags.
+ * Handles newlines. Works for all AI providers.
+ */
+function renderMarkdown(text: string) {
   return text.split("\n").map((line, i, arr) => (
     <React.Fragment key={i}>
-      {line}
+      {renderBoldInline(line)}
       {i < arr.length - 1 && <br />}
     </React.Fragment>
   ));
 }
 
-// ─────────────────────────────────────────────────────────────
-// Therapist Parsing (NEW - SAFE ADDITION)
-// ─────────────────────────────────────────────────────────────
-
-function parseTherapistList(text: string) {
-  const lines = text.split("\n").filter((l) => l.trim());
-  const therapists: { name: string; details: string }[] = [];
-
-  for (const line of lines) {
-    const match = line.match(/^\*\s+\*\*([^*]+)\*\*[:\s—–-]+(.*)/);
-    if (match) {
-      therapists.push({
-        name: match[1].trim(),
-        details: match[2].trim(),
-      });
-    }
-  }
-
-  // Only treat as therapist list if multiple entries
-  return therapists.length >= 2 ? therapists : [];
+function renderBoldInline(line: string): React.ReactNode {
+  // Split on **...** markers
+  const parts = line.split(/(\*{1,2}[^*]+\*{1,2})/g);
+  if (parts.length === 1) return line;
+  return parts.map((part, i) => {
+    const boldMatch = part.match(/^\*{1,2}([^*]+)\*{1,2}$/);
+    if (boldMatch) return <strong key={i}>{boldMatch[1]}</strong>;
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
 }
 
-// ─────────────────────────────────────────────────────────────
-// Therapist Card (NEW UI)
-// ─────────────────────────────────────────────────────────────
+// ── Therapist Card UI ─────────────────────────────────────────
 
 function TherapistCard({
   therapist,
   onSelect,
   disabled,
 }: {
-  therapist: { name: string; details: string };
+  therapist: ParsedTherapist;
   onSelect: (name: string) => void;
   disabled: boolean;
 }) {
   return (
     <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-teal-50 hover:border-teal-300 transition-colors">
-      <div className="flex flex-col">
-        <span className="text-sm font-semibold text-slate-800">
+      <div className="flex flex-col gap-0.5 flex-1 min-w-0 mr-3">
+        <span className="text-sm font-semibold text-slate-800 truncate">
           {therapist.name}
         </span>
-        <span className="text-xs text-slate-500">
-          {therapist.details}
-        </span>
+        {therapist.yearsExperience > 0 && (
+          <span className="text-xs text-slate-400">
+            {therapist.yearsExperience} yrs experience
+          </span>
+        )}
+        {therapist.specialties.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {therapist.specialties.slice(0, 3).map((s) => (
+              <span
+                key={s}
+                className="inline-block rounded-full px-2 py-0.5 text-xs bg-teal-100 text-teal-700"
+              >
+                {s}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
-
       <button
         onClick={() => onSelect(therapist.name)}
         disabled={disabled}
-        className="px-3 py-1 text-xs bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:opacity-40"
+        className="flex-shrink-0 px-3 py-1.5 text-xs bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:opacity-40 transition-colors"
       >
         Select
       </button>
@@ -91,9 +99,7 @@ function TherapistCard({
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// Main Component
-// ─────────────────────────────────────────────────────────────
+// ── Main Component ────────────────────────────────────────────
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
   message,
@@ -101,27 +107,21 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onTherapistSelect,
   isLoading = false,
 }) => {
-  console.log("[MessageBubble] render", {
-    id: message.id,
-    sender: message.sender,
-    hasSlots: !!message.slots?.length,
-    slotCount: message.slots?.length ?? 0,
-  });
-
   const isUser = message.sender === "user";
 
   const hasSlots = !isUser && !!message.slots && message.slots.length > 0;
 
-  // ✅ NEW: therapist detection
-  const therapists = !isUser ? parseTherapistList(message.text) : [];
-  const hasTherapists = therapists.length > 0;
+  const therapists: ParsedTherapist[] = !isUser
+    ? parseTherapists(message.text)
+    : [];
+  const hasTherapists = therapists.length >= 2;
 
-  // Existing logic preserved
-  const displayText = hasSlots ? stripSlotLines(message.text) : message.text;
+  let displayText = message.text;
+  if (hasSlots) displayText = stripSlotLines(displayText);
+  if (hasTherapists) displayText = stripTherapistLines(displayText);
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-3`}>
-      {/* Agent avatar */}
       {!isUser && (
         <div className="mr-2 flex-shrink-0 h-8 w-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 text-sm font-bold">
           AI
@@ -142,11 +142,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm"
           }`}
         >
-          {/* ───────────────────────────────────────────── */}
-          {/* Therapist Cards (NEW, NON-BREAKING) */}
-          {/* ───────────────────────────────────────────── */}
-          {hasTherapists ? (
-            <div className="space-y-2">
+          {/* Text with markdown bold rendering */}
+          {displayText && renderMarkdown(displayText)}
+
+          {/* Therapist cards */}
+          {hasTherapists && (
+            <div className="mt-3 flex flex-col gap-2">
+              <p className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-1">
+                Matching Therapists — tap to select
+              </p>
               {therapists.map((t) => (
                 <TherapistCard
                   key={t.name}
@@ -156,20 +160,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 />
               ))}
             </div>
-          ) : (
-            <>
-              {/* Existing text rendering */}
-              {displayText && renderText(displayText)}
+          )}
 
-              {/* EXISTING SLOT LOGIC (UNCHANGED) */}
-              {hasSlots && onSlotSelect && (
-                <SlotCards
-                  slots={message.slots!}
-                  onSelect={onSlotSelect}
-                  disabled={isLoading}
-                />
-              )}
-            </>
+          {/* Slot cards (existing logic unchanged) */}
+          {hasSlots && onSlotSelect && (
+            <SlotCards
+              slots={message.slots!}
+              onSelect={onSlotSelect}
+              disabled={isLoading}
+            />
           )}
         </div>
 
@@ -178,7 +177,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         </span>
       </div>
 
-      {/* User avatar */}
       {isUser && (
         <div className="ml-2 flex-shrink-0 h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 text-sm font-bold">
           You
@@ -187,4 +185,3 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     </div>
   );
 };
-

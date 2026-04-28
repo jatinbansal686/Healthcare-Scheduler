@@ -25,7 +25,10 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
 
   const [inputText, setInputText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Ref to the scrollable messages container — we scroll it directly
+  // instead of using scrollIntoView, which can escape the container
+  // and scroll the entire page.
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -34,10 +37,15 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
     }
   }, [chat.error]);
 
+  // Scroll the messages container to bottom on new messages / tools.
+  // Using scrollTop instead of scrollIntoView to stay within the container.
   useEffect(() => {
     logger.debug(CONTEXT, "Auto-scrolling to bottom");
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat.messages, chat.activeTools]);
+    const el = messagesContainerRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [chat.messages, chat.activeTools, chat.isLoading]);
 
   const handleSubmit = () => {
     const text = inputText.trim();
@@ -61,10 +69,16 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
   };
 
   return (
-    // overflow-hidden is the key fix: without it the flex column can grow
-    // taller than its parent, pushing the input box off-screen.
-    // flex-col + h-full makes the 3 children (header / messages / input)
-    // stack vertically and fill exactly the parent height.
+    /*
+     * LAYOUT CONTRACT:
+     *   - This component must be placed inside a container that has a fixed/
+     *     constrained height (e.g. h-screen, h-full with a sized ancestor).
+     *   - flex flex-col + overflow-hidden ensures the 3 children (header /
+     *     messages / input) fill exactly the parent height.
+     *   - The messages div is the ONLY scrollable region (overflow-y-auto).
+     *     min-h-0 is critical: without it flex children won't shrink below
+     *     their content size, causing the container to overflow the viewport.
+     */
     <div className="flex flex-col h-full overflow-hidden bg-slate-50">
       {/* ── Header ──────────────────────────────────────────── */}
       <div className="flex-shrink-0 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 shadow-sm">
@@ -90,8 +104,17 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
         </button>
       </div>
 
-      {/* ── Messages (only this section scrolls) ────────────── */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-1 min-h-0">
+      {/* ── Messages (ONLY this section scrolls) ────────────── */}
+      {/*
+       * min-h-0 is the critical fix for the scroll issue.
+       * flex-1 makes it fill available space, but without min-h-0
+       * a flex child's minimum height defaults to auto (its content size),
+       * so it grows beyond the container and pushes the page.
+       */}
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 min-h-0 overflow-y-auto px-4 py-6 space-y-1"
+      >
         {chat.messages.length === 0 && (
           <div className="flex justify-start mb-3">
             <div className="mr-2 flex-shrink-0 h-8 w-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 text-sm font-bold">
@@ -136,8 +159,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
             </div>
           </div>
         )}
-
-        <div ref={messagesEndRef} />
       </div>
 
       {/* ── Error banner (above input, doesn't push input off) ── */}
