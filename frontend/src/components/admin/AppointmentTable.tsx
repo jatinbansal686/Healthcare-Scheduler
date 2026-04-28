@@ -1,5 +1,7 @@
 // ============================================================
 // AppointmentTable.tsx — Admin table for booked appointments
+// Fix 1: therapist join returns `therapists` (plural object) not `therapist`
+// Fix 2: patient shown as name from admin_notes, not "anonymous" identifier
 // ============================================================
 
 import React from "react";
@@ -30,6 +32,24 @@ function formatDate(iso: string): string {
   }
 }
 
+// Extract patient name from admin_notes ("Patient: John\nNotes: ...")
+function extractPatientName(adminNotes: string | null | undefined): string {
+  if (!adminNotes) return "—";
+  const match = adminNotes.match(/^Patient:\s*(.+)$/m);
+  return match ? match[1].trim() : "—";
+}
+
+// The Supabase join `therapists!therapist_id` returns a key named `therapists`
+// (the table name), not `therapist`. Access it via index signature.
+function getTherapistName(row: AppointmentRow): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const joined = (row as any).therapists;
+  if (!joined) return "—";
+  // Supabase may return array or single object depending on FK cardinality
+  if (Array.isArray(joined)) return joined[0]?.name ?? "—";
+  return joined.name ?? "—";
+}
+
 export const AppointmentTable: React.FC<AppointmentTableProps> = ({
   appointments,
 }) => {
@@ -49,7 +69,7 @@ export const AppointmentTable: React.FC<AppointmentTableProps> = ({
         <thead className="bg-slate-50">
           <tr>
             {[
-              "Patient ID",
+              "Patient",
               "Therapist",
               "Start Time",
               "End Time",
@@ -68,11 +88,11 @@ export const AppointmentTable: React.FC<AppointmentTableProps> = ({
         <tbody className="divide-y divide-slate-50">
           {appointments.map((row) => (
             <tr key={row.id} className="hover:bg-slate-50 transition-colors">
-              <td className="px-4 py-3 text-xs text-slate-400 font-mono">
-                {row.patient_identifier?.slice(0, 8) ?? "—"}…
+              <td className="px-4 py-3 text-sm text-slate-700">
+                {extractPatientName(row.admin_notes)}
               </td>
               <td className="px-4 py-3 text-sm text-slate-700">
-                {row.therapist?.name ?? "—"}
+                {getTherapistName(row)}
               </td>
               <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">
                 {formatDate(row.start_time)}
