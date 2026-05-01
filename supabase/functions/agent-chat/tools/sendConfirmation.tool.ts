@@ -18,8 +18,9 @@ export class SendConfirmationTool implements ITool {
     name: "sendConfirmation",
     description:
       "Generate a structured confirmation message after a successful booking. " +
-      "Call this as the final step after bookAppointment succeeds. " +
-      "Returns formatted confirmation details for display to the patient.",
+      "Call this as the FINAL step after notifyTherapist completes. " +
+      "The appointment is PENDING therapist confirmation — the message must reflect this. " +
+      "Do NOT say 'confirmed' — say the request has been sent and therapist will confirm within 24 hours.",
     parameters: {
       type: "object",
       properties: {
@@ -50,7 +51,8 @@ export class SendConfirmationTool implements ITool {
         },
         calendarEventCreated: {
           type: "boolean",
-          description: "Whether a Google Calendar event was successfully created",
+          description:
+            "Whether a Google Calendar event was successfully created",
         },
         therapistPhone: {
           type: "string",
@@ -71,7 +73,7 @@ export class SendConfirmationTool implements ITool {
 
   async execute(
     args: Record<string, unknown>,
-    _context: ToolContext
+    _context: ToolContext,
   ): Promise<ToolResult> {
     logger.tool("SendConfirmationTool.execute called", {
       appointmentId: args.appointmentId,
@@ -81,7 +83,13 @@ export class SendConfirmationTool implements ITool {
 
     try {
       // Validate required fields
-      const required = ["appointmentId", "therapistName", "patientName", "startTime", "endTime"];
+      const required = [
+        "appointmentId",
+        "therapistName",
+        "patientName",
+        "startTime",
+        "endTime",
+      ];
       for (const field of required) {
         if (!args[field]) {
           throw new ValidationError(`'${field}' is required`);
@@ -107,7 +115,7 @@ export class SendConfirmationTool implements ITool {
       });
 
       const durationMinutes = Math.round(
-        (endDate.getTime() - startDate.getTime()) / 60000
+        (endDate.getTime() - startDate.getTime()) / 60000,
       );
 
       const confirmationDetails = {
@@ -120,27 +128,27 @@ export class SendConfirmationTool implements ITool {
           sessionType: args.sessionType,
         },
         calendarStatus: args.calendarEventCreated
-          ? "✅ Added to therapist's calendar"
-          : "📞 Therapist's office will confirm the calendar event directly",
+          ? "📅 Tentatively added to therapist's calendar — will confirm upon approval"
+          : "📅 Calendar will be updated once therapist confirms",
         nextSteps: [
-          "You will receive a reminder 24 hours before your appointment",
-          args.sessionType === "telehealth"
-            ? "A video call link will be sent to you before the appointment"
-            : "Please arrive 10 minutes early for your first visit",
+          `${args.therapistName} has been notified and will confirm within 24 hours`,
+          "You will be notified once the therapist confirms your appointment",
+          "If not confirmed within 24 hours, the request will be automatically cancelled",
           args.therapistPhone
-            ? `Need to reschedule? Call ${args.therapistPhone}`
-            : "To reschedule, please contact the office directly",
+            ? `Questions? Call ${args.therapistPhone}`
+            : "For urgent changes, please contact the office directly",
         ],
         confirmationMessage:
-          `✅ Appointment Confirmed!\n\n` +
-          `Hi ${args.patientName}, your appointment has been scheduled!\n\n` +
+          `⏳ Appointment Request Submitted!\n\n` +
+          `Hi ${args.patientName}, your appointment request has been sent to ${args.therapistName}!\n\n` +
           `📋 Details:\n` +
           `• Therapist: ${args.therapistName}\n` +
           `• Date & Time: ${formattedDate}\n` +
           `• Duration: ${durationMinutes} minutes\n` +
           `• Session Type: ${args.sessionType === "telehealth" ? "🖥️ Telehealth" : "🏥 In-Person"}\n\n` +
-          `${args.calendarEventCreated ? "✅ This has been added to your therapist's calendar." : "📞 The therapist's office will confirm your appointment shortly."}\n\n` +
-          `Is there anything else you need help with?`,
+          `📬 ${args.therapistName} has been notified and will confirm your appointment within 24 hours. ` +
+          `If they don't respond in time, the request will be automatically cancelled and you can try another slot.\n\n` +
+          `Is there anything else I can help you with?`,
       };
 
       logger.tool("Confirmation generated successfully", {

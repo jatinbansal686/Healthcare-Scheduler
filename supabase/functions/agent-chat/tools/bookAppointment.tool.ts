@@ -83,9 +83,10 @@ export class BookAppointmentTool implements ITool {
     name: "bookAppointment",
     description:
       "Book an appointment by creating a Google Calendar event on the therapist's calendar " +
-      "AND saving the appointment record in the database. " +
+      "AND saving the appointment record in the database with 'pending' status. " +
+      "The appointment becomes confirmed only after the therapist approves via email. " +
       "Call this only after the patient has confirmed a specific time slot. " +
-      "This is the final booking action — confirm with patient before calling.",
+      "After this succeeds, ALWAYS call notifyTherapist next, then sendConfirmation.",
     parameters: {
       type: "object",
       properties: {
@@ -234,11 +235,12 @@ export class BookAppointmentTool implements ITool {
           );
 
           const calendarEvent = {
-            summary: `Therapy Session — ${args.patientName}`,
+            summary: `[PENDING] Therapy Session — ${args.patientName}`,
             description:
               `Patient: ${args.patientName}\n` +
               `Patient ID: ${args.patientIdentifier}\n` +
               `Type: ${appointmentType}\n` +
+              `Status: Awaiting therapist confirmation\n` +
               (args.notes ? `Notes: ${args.notes}` : ""),
             start: {
               dateTime: args.startTime as string,
@@ -248,6 +250,7 @@ export class BookAppointmentTool implements ITool {
               dateTime: args.endTime as string,
               timeZone: "America/Chicago",
             },
+            status: "tentative",
           };
 
           const createdEvent = await context.calendarClient.createEvent(
@@ -288,10 +291,13 @@ export class BookAppointmentTool implements ITool {
             end_time: args.endTime,
             google_calendar_event_id: calendarEventId,
             appointment_type: appointmentType, // ← always a valid enum value now
-            status: "confirmed",
+            status: "pending", // ← pending until therapist confirms
             admin_notes: (args.notes as string) || null,
+            // confirmation_token + confirmation_token_expires_at auto-set by DB default (migration 008)
           })
-          .select("id, start_time, end_time, status, appointment_type")
+          .select(
+            "id, start_time, end_time, status, appointment_type, confirmation_token",
+          )
           .single();
 
       if (appointmentError) {
@@ -356,27 +362,31 @@ export class BookAppointmentTool implements ITool {
         logger.db("Inquiry status updated to scheduled");
       }
 
-      logger.tool("BookAppointmentTool completed successfully", {
-        appointmentId: appointment.id,
-        calendarEventId,
-        appointmentType,
-      });
+      logger.tool(
+        "BookAppointmentTool completed — pending therapist confirmation",
+        {
+          appointmentId: appointment.id,
+          confirmationToken: appointment.confirmation_token,
+          appointmentType,
+        },
+      );
 
       return {
         success: true,
         data: {
           appointmentId: appointment.id,
           therapistName: therapist.name,
+          therapistEmail: therapist.email, // ← needed by notifyTherapist
           patientName: args.patientName,
           startTime: appointment.start_time,
           endTime: appointment.end_time,
-          status: appointment.status,
+          status: "pending", // ← always pending now
           appointmentType: appointment.appointment_type,
+          confirmationToken: appointment.confirmation_token, // ← needed by notifyTherapist
           calendarEventId,
           calendarConnected: !!calendarEventId,
-          message: calendarEventId
-            ? `Appointment confirmed and added to ${therapist.name}'s calendar!`
-            : `Appointment confirmed in our system. ${therapist.name}'s office will reach out to confirm the calendar event.`,
+          message:
+            "Appointment request submitted. Notifying therapist for confirmation.",
         },
       };
     } catch (err) {
