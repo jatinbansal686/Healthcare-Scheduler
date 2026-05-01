@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { ToolProgressBar } from "./ToolProgressBar";
@@ -16,7 +17,6 @@ interface ChatWindowProps {
 const WELCOME_MESSAGE =
   "Hello! I'm your healthcare scheduling assistant. I can help you find the right therapist based on your needs, schedule, and insurance.\n\nTell me a bit about what you're going through, and we'll find someone great for you.";
 
-// Send arrow icon — used on mobile instead of text
 const SendIcon = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -57,6 +57,19 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
     if (el) el.scrollTop = el.scrollHeight;
   }, [chat.messages, chat.activeTools, chat.isLoading]);
 
+  // Scroll to bottom when keyboard opens (visualViewport resize)
+  useEffect(() => {
+    const scrollToBottom = () => {
+      const el = messagesContainerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    };
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", scrollToBottom);
+      return () =>
+        window.visualViewport!.removeEventListener("resize", scrollToBottom);
+    }
+  }, []);
+
   const handleSubmit = () => {
     const text = inputText.trim();
     logger.info(CONTEXT, "handleSubmit called", { textLength: text.length });
@@ -83,12 +96,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
   };
 
   return (
-    // FIX: overflow-x-hidden on root kills the horizontal scrollbar entirely
-    <div className="flex flex-col h-full w-full overflow-x-hidden overflow-y-hidden bg-slate-50">
+    // h-full fills the flex column from ChatPage
+    // overflow-hidden on both axes — no scrollbars on the container itself
+    <div className="flex flex-col h-full w-full overflow-hidden bg-slate-50">
       {/* ── Header ── */}
       <div className="flex-shrink-0 flex items-center justify-between border-b border-slate-200 bg-white px-3 sm:px-6 py-2 sm:py-4 shadow-sm">
         <div className="flex items-center gap-2 min-w-0">
-          {/* FIX: Smaller avatar on mobile (h-6 w-6) → normal on sm+ (h-9 w-9) */}
           <div className="h-6 w-6 sm:h-9 sm:w-9 flex-shrink-0 rounded-full bg-teal-600 flex items-center justify-center text-white text-[9px] sm:text-sm font-bold">
             HC
           </div>
@@ -111,18 +124,18 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
       </div>
 
       {/* ── Messages ── */}
-      {/* FIX: overflow-x-hidden prevents any bubble/card from causing horiz scroll */}
+      {/* Only this div scrolls vertically. overflow-x-hidden prevents horiz scroll. */}
       <div
         ref={messagesContainerRef}
         className="flex-1 min-h-0 w-full overflow-y-auto overflow-x-hidden overscroll-contain px-2 sm:px-4 md:px-6 py-4 space-y-1"
       >
         {chat.messages.length === 0 && (
           <div className="flex justify-start mb-3">
-            {/* FIX: Smaller AI avatar on mobile */}
             <div className="mr-1.5 flex-shrink-0 h-6 w-6 sm:h-8 sm:w-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 text-[9px] sm:text-sm font-bold self-start">
               AI
             </div>
-            <div className="flex-1 min-w-0 max-w-[85%] sm:max-w-[78%]">
+            {/* max-w-[calc(100%-2rem)] ensures bubble never touches right edge */}
+            <div className="min-w-0 max-w-[calc(100%-2rem)] sm:max-w-[78%]">
               <div className="rounded-2xl rounded-tl-sm px-3 sm:px-4 py-2.5 text-sm leading-relaxed bg-white border border-slate-200 text-slate-800 shadow-sm break-words overflow-hidden">
                 {WELCOME_MESSAGE.split("\n").map((line, i, arr) => (
                   <React.Fragment key={i}>
@@ -185,7 +198,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
             style={{ minHeight: "42px" }}
           />
 
-          {/* FIX: Mobile — icon-only square button (sm:hidden) */}
+          {/* Mobile: icon-only button */}
           <button
             onClick={handleSubmit}
             disabled={!inputText.trim() || chat.isLoading}
@@ -195,7 +208,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chat }) => {
             <SendIcon />
           </button>
 
-          {/* Desktop — full text button (hidden on mobile) */}
+          {/* Desktop: text button */}
           <div className="hidden sm:block flex-shrink-0">
             <Button
               onClick={handleSubmit}

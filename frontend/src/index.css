@@ -19,6 +19,11 @@ body,
   height: 100%;
   margin: 0;
   padding: 0;
+  /* FIX: Prevent the root from scrolling — only inner containers scroll.
+     This stops iOS Safari from creating blank space when the keyboard opens. */
+  overflow: hidden;
+  /* FIX: Prevent iOS rubber-band / overscroll bounce that creates blank area. */
+  overscroll-behavior: none;
 }
 
 body {
