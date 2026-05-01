@@ -1,6 +1,9 @@
 // ============================================================
 // agent-chat/tools/getTherapistProfile.tool.ts
 // Tool 6: Fetch full therapist profile from DB by ID
+// CHANGE: Added fee_info synthesised field so AI can answer
+//         cost/charges questions from the profile data it has.
+//         All DB queries and existing fields unchanged.
 // ============================================================
 
 import type { ITool, ToolContext, ToolResult } from "./ITool.ts";
@@ -18,7 +21,8 @@ export class GetTherapistProfileTool implements ITool {
     description:
       "Fetch the full profile of a specific therapist from the database. " +
       "Use this when a patient asks for more details about a therapist, " +
-      "or before booking to confirm all details are correct.",
+      "asks about fees/charges/cost, or before booking to confirm all details. " +
+      "The result includes fee_info — use it to answer cost questions directly.",
     parameters: {
       type: "object",
       properties: {
@@ -48,8 +52,6 @@ export class GetTherapistProfileTool implements ITool {
         therapistId: args.therapistId,
       });
 
-      // Actual therapists columns (no title, no phone, no profile_image_url,
-      // no is_accepting_patients — use is_active instead, photo_url not profile_image_url)
       const { data: therapist, error } = await context.supabase
         .from("therapists")
         .select(
@@ -70,6 +72,29 @@ export class GetTherapistProfileTool implements ITool {
         name: therapist.name,
       });
 
+      // ── Synthesise fee_info from available schema fields ──
+      // The DB has no fee column. Build a human-readable summary
+      // from accepted_insurance and session_duration_minutes so the
+      // AI can answer "what are the charges?" without saying "I don't know".
+      const insuranceList: string[] = therapist.accepted_insurance ?? [];
+      const acceptsSelfPay = insuranceList.some((i: string) =>
+        /self.?pay|private|out.of.pocket/i.test(i),
+      );
+      const insuranceDisplay = insuranceList
+        .filter((i: string) => !/self.?pay/i.test(i))
+        .join(", ");
+
+      const feeInfo = [
+        insuranceDisplay
+          ? `Accepts insurance: ${insuranceDisplay}`
+          : "Insurance: contact office for details",
+        acceptsSelfPay
+          ? "Self-pay accepted (exact rate confirmed at booking)"
+          : "Self-pay availability: contact office",
+        `Session length: ${therapist.session_duration_minutes ?? 50} minutes`,
+        "Exact session fees are confirmed by the office when scheduling",
+      ].join(". ");
+
       return {
         success: true,
         data: {
@@ -86,6 +111,8 @@ export class GetTherapistProfileTool implements ITool {
           session_duration_minutes: therapist.session_duration_minutes,
           availability_timezone: therapist.availability_timezone,
           is_active: therapist.is_active,
+          // Synthesised field — AI uses this to answer fee/cost questions
+          fee_info: feeInfo,
         },
       };
     } catch (err) {

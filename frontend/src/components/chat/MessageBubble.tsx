@@ -1,9 +1,5 @@
 // ============================================================
-// MessageBubble.tsx
-// CHANGE: Prefers message.structuredData (from respondToUser tool)
-//         over regex parsing for therapists and slots.
-//         Legacy regex path kept 100% intact as fallback.
-//         No existing props, types, or rendering logic removed.
+// MessageBubble.tsx — final merged version
 // ============================================================
 
 import React from "react";
@@ -38,45 +34,48 @@ function formatTime(iso: string): string {
   }
 }
 
-/**
- * Normalize text before rendering:
- * - Replace literal "\n" (two chars: backslash + n) with real newlines
- * - Replace literal "\n•" and "\n-" bullet patterns
- * - Collapse 3+ consecutive newlines to 2
- */
 function normalizeText(text: string): string {
   return text
-    .replace(/\\n/g, "\n") // literal \n → real newline
-    .replace(/\\t/g, "  ") // literal \t → spaces
-    .replace(/\n{3,}/g, "\n\n"); // collapse excess blank lines
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "  ")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+function isEmailOrUrl(text: string): boolean {
+  return /^(https?:\/\/|www\.|[\w.+-]+@[\w-]+\.)/.test(text.trim());
 }
 
 function renderMarkdown(text: string) {
   const normalized = normalizeText(text);
-  const lines = normalized.split("\n");
-
-  return lines.map((line, i) => {
+  return normalized.split("\n").map((line, i) => {
     const trimmed = line.trim();
-
-    // Blank line → spacer
-    if (!trimmed) {
-      return <div key={i} className="h-1.5" />;
-    }
-
-    // Bullet line: starts with •, -, *, or numbered list
+    if (!trimmed) return <div key={i} className="h-1.5" />;
     const bulletMatch = trimmed.match(/^([•\-*]|\d+\.)\s+(.+)$/);
     if (bulletMatch) {
       return (
         <div key={i} className="flex gap-1.5 my-0.5">
           <span className="text-slate-400 flex-shrink-0 mt-0.5">•</span>
-          <span>{renderBoldInline(bulletMatch[2])}</span>
+          <span className="min-w-0 break-words overflow-hidden">
+            {renderBoldInline(bulletMatch[2])}
+          </span>
         </div>
       );
     }
-
-    // Normal line
+    if (isEmailOrUrl(trimmed)) {
+      return (
+        <div
+          key={i}
+          className={`break-all overflow-hidden ${i > 0 ? "mt-0.5" : ""}`}
+        >
+          {renderBoldInline(trimmed)}
+        </div>
+      );
+    }
     return (
-      <div key={i} className={i > 0 ? "mt-0.5" : ""}>
+      <div
+        key={i}
+        className={`break-words overflow-hidden ${i > 0 ? "mt-0.5" : ""}`}
+      >
         {renderBoldInline(trimmed)}
       </div>
     );
@@ -84,7 +83,6 @@ function renderMarkdown(text: string) {
 }
 
 function renderBoldInline(line: string): React.ReactNode {
-  // Split on **bold**, *italic*, and **bold** patterns
   const parts = line.split(/(\*{1,2}[^*]+\*{1,2})/g);
   if (parts.length === 1) return line;
   return parts.map((part, i) => {
@@ -94,9 +92,6 @@ function renderBoldInline(line: string): React.ReactNode {
   });
 }
 
-// ── Therapist card — accepts both structured and parsed types ─
-// TherapistOption (structured) and ParsedTherapist (legacy regex)
-// share the same visual fields: name, yearsExperience, specialties.
 interface TherapistCardProps {
   therapist: TherapistOption | ParsedTherapist;
   onSelect: (name: string) => void;
@@ -105,9 +100,9 @@ interface TherapistCardProps {
 
 function TherapistCard({ therapist, onSelect, disabled }: TherapistCardProps) {
   return (
-    <div className="flex items-center justify-between p-2.5 sm:p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-teal-50 hover:border-teal-300 transition-colors">
-      <div className="flex flex-col gap-0.5 flex-1 min-w-0 mr-2 sm:mr-3">
-        <span className="text-sm font-semibold text-slate-800 truncate">
+    <div className="flex items-start justify-between gap-2 p-2.5 sm:p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-teal-50 hover:border-teal-300 transition-colors">
+      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+        <span className="text-sm font-semibold text-slate-800 break-words leading-snug">
           {therapist.name}
         </span>
         {(therapist.yearsExperience ?? 0) > 0 && (
@@ -120,7 +115,7 @@ function TherapistCard({ therapist, onSelect, disabled }: TherapistCardProps) {
             {(therapist.specialties ?? []).slice(0, 3).map((s) => (
               <span
                 key={s}
-                className="inline-block rounded-full px-2 py-0.5 text-xs bg-teal-100 text-teal-700"
+                className="inline-block rounded-full px-2 py-0.5 text-xs bg-teal-100 text-teal-700 whitespace-nowrap"
               >
                 {s}
               </span>
@@ -131,15 +126,13 @@ function TherapistCard({ therapist, onSelect, disabled }: TherapistCardProps) {
       <button
         onClick={() => onSelect(therapist.name)}
         disabled={disabled}
-        className="flex-shrink-0 px-2.5 sm:px-3 py-1.5 text-xs bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:opacity-40 transition-colors"
+        className="flex-shrink-0 px-2.5 sm:px-3 py-1.5 text-xs bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:opacity-40 transition-colors focus:outline-none focus:ring-2 focus:ring-teal-400"
       >
         Select
       </button>
     </div>
   );
 }
-
-// ── Confirmation card ─────────────────────────────────────────
 
 interface ConfirmationCardProps {
   therapistName: string;
@@ -165,7 +158,8 @@ function ConfirmationCard({
       </div>
       <div className="text-sm text-slate-700 space-y-1">
         <div>
-          <span className="font-medium">Therapist:</span> {therapistName}
+          <span className="font-medium">Therapist:</span>{" "}
+          <span className="break-words">{therapistName}</span>
         </div>
         <div>
           <span className="font-medium">Date:</span> {date}
@@ -178,7 +172,7 @@ function ConfirmationCard({
             href={meetLink}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-block mt-1 text-xs text-teal-600 underline hover:text-teal-800"
+            className="inline-block mt-1 text-xs text-teal-600 underline hover:text-teal-800 break-all"
           >
             Join Google Meet
           </a>
@@ -187,8 +181,6 @@ function ConfirmationCard({
     </div>
   );
 }
-
-// ── Out-of-scope badge ────────────────────────────────────────
 
 function OutOfScopeBadge() {
   return (
@@ -199,8 +191,6 @@ function OutOfScopeBadge() {
   );
 }
 
-// ── Main component ────────────────────────────────────────────
-
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
   message,
   onSlotSelect,
@@ -208,38 +198,25 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   isLoading = false,
 }) => {
   const isUser = message.sender === "user";
-  const sd = message.structuredData; // structured path (preferred)
-
-  // ── Determine what to render ──────────────────────────────
-  // Priority 1: structuredData from respondToUser tool (typed, reliable)
-  // Priority 2: legacy slots on message (from regex parser)
-  // Priority 3: regex parse of message.text (original fallback)
+  const sd = message.structuredData;
 
   const hasStructuredTherapists =
     !isUser && sd?.ui_hint === "therapists" && (sd.therapists?.length ?? 0) > 0;
-
   const hasStructuredSlots =
     !isUser && sd?.ui_hint === "slots" && (sd.slots?.length ?? 0) > 0;
-
   const hasConfirmation =
     !isUser && sd?.ui_hint === "confirmation" && !!sd.confirmation;
-
   const isOutOfScope = !isUser && sd?.ui_hint === "out_of_scope";
 
-  // Legacy fallback paths — only run when no structuredData
   const legacySlots = !isUser && !sd ? (message.slots ?? []) : [];
   const hasLegacySlots = legacySlots.length > 0;
-
   const legacyTherapists: ParsedTherapist[] =
     !isUser && !sd ? parseTherapists(message.text) : [];
   const hasLegacyTherapists = legacyTherapists.length >= 1;
 
-  // ── Strip parsed content from display text ────────────────
   let displayText = message.text;
   if (hasLegacySlots) displayText = stripSlotLines(displayText);
   if (hasLegacyTherapists) displayText = stripTherapistLines(displayText);
-  // For structured responses: message text is already a clean intro line
-  // (the AI is instructed to keep it brief when ui_hint is slots/therapists)
 
   const hasExtras =
     hasStructuredTherapists ||
@@ -250,30 +227,23 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     hasLegacyTherapists;
 
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-3`}>
+    <div
+      className={`flex w-full min-w-0 ${isUser ? "justify-end" : "justify-start"} mb-3`}
+    >
       {!isUser && (
-        <div className="mr-1.5 sm:mr-2 flex-shrink-0 h-7 w-7 sm:h-8 sm:w-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 text-xs sm:text-sm font-bold">
+        <div className="mr-1.5 sm:mr-2 flex-shrink-0 h-6 w-6 sm:h-8 sm:w-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 text-[9px] sm:text-xs font-bold self-start mt-0.5">
           AI
         </div>
       )}
 
       <div
-        className={`${
-          hasExtras
-            ? "max-w-[92%] sm:max-w-[90%] md:max-w-[85%]"
-            : "max-w-[80%] sm:max-w-[75%]"
-        } ${isUser ? "items-end" : "items-start"} flex flex-col gap-1`}
+        className={`flex flex-col gap-1 min-w-0 overflow-hidden ${isUser ? "items-end" : "items-start"} ${hasExtras ? "max-w-[92%] sm:max-w-[88%] md:max-w-[82%]" : "max-w-[80%] sm:max-w-[75%] md:max-w-[68%]"}`}
       >
         <div
-          className={`rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 text-sm leading-relaxed w-full ${
-            isUser
-              ? "bg-teal-600 text-white rounded-tr-sm"
-              : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm"
-          }`}
+          className={`w-full rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 text-sm leading-relaxed overflow-hidden ${isUser ? "bg-teal-600 text-white rounded-tr-sm" : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm"}`}
         >
           {displayText && renderMarkdown(displayText)}
 
-          {/* ── Structured: therapist cards ── */}
           {hasStructuredTherapists && (
             <div className="mt-2 sm:mt-3 flex flex-col gap-2">
               <p className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-1">
@@ -290,7 +260,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             </div>
           )}
 
-          {/* ── Structured: slot cards ── */}
           {hasStructuredSlots && onSlotSelect && (
             <SlotCards
               slots={sd!.slots!}
@@ -299,7 +268,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             />
           )}
 
-          {/* ── Structured: confirmation ── */}
           {hasConfirmation && (
             <ConfirmationCard
               therapistName={sd!.confirmation!.therapistName}
@@ -310,10 +278,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             />
           )}
 
-          {/* ── Structured: out of scope ── */}
           {isOutOfScope && <OutOfScopeBadge />}
 
-          {/* ── Legacy: therapist cards (regex fallback) ── */}
           {hasLegacyTherapists && (
             <div className="mt-2 sm:mt-3 flex flex-col gap-2">
               <p className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-1">
@@ -330,7 +296,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             </div>
           )}
 
-          {/* ── Legacy: slot cards (regex fallback) ── */}
           {hasLegacySlots && onSlotSelect && (
             <SlotCards
               slots={legacySlots}
@@ -340,13 +305,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           )}
         </div>
 
-        <span className="text-xs text-slate-400 px-1">
+        <span className="text-xs text-slate-400 px-1 flex-shrink-0">
           {formatTime(message.timestamp)}
         </span>
       </div>
 
       {isUser && (
-        <div className="ml-1.5 sm:ml-2 flex-shrink-0 h-7 w-7 sm:h-8 sm:w-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 text-xs sm:text-sm font-bold">
+        <div className="ml-1.5 sm:ml-2 flex-shrink-0 h-6 w-6 sm:h-8 sm:w-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 text-[9px] sm:text-xs font-bold self-start mt-0.5">
           You
         </div>
       )}
