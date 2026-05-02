@@ -67,7 +67,7 @@ Deno.serve(async (req: Request) => {
     const { data: therapist, error: therapistError } = await supabase
       .from("therapists")
       .select(
-        "id, name, email, specialties, session_duration_minutes, availability_timezone",
+        "id, name, email, specialties, session_duration_minutes, availability_timezone, google_calendar_id",
       )
       .eq("auth_user_id", user.id)
       .single();
