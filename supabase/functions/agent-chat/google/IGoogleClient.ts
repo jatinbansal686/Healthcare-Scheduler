@@ -1,9 +1,3 @@
-// ============================================================
-// agent-chat/google/IGoogleClient.ts
-// Interfaces for all external Google services
-// SOLID: DIP — depend on abstractions, not on concrete SDK implementations
-// ============================================================
-
 import type { GeminiMessage } from "../../_shared/types.ts";
 
 // ── Gemini AI interface ───────────────────────────────────────
@@ -40,7 +34,7 @@ export interface IGoogleAIClient {
   generateWithTools(
     messages: GeminiMessage[],
     tools: FunctionDeclaration[],
-    systemInstruction: string
+    systemInstruction: string,
   ): Promise<GenerateResult>;
 }
 
@@ -53,6 +47,8 @@ export interface CalendarEvent {
   start: { dateTime: string; timeZone?: string };
   end: { dateTime: string; timeZone?: string };
   attendees?: Array<{ email: string }>;
+  // "tentative" when pending therapist confirmation; "confirmed" after approval
+  status?: "confirmed" | "tentative" | "cancelled";
 }
 
 export interface FreeBusySlot {
@@ -65,26 +61,34 @@ export interface IGoogleCalendarClient {
     calendarId: string,
     accessToken: string,
     timeMin: string,
-    timeMax: string
+    timeMax: string,
   ): Promise<CalendarEvent[]>;
 
   createEvent(
     calendarId: string,
     accessToken: string,
-    event: CalendarEvent
+    event: CalendarEvent,
+  ): Promise<CalendarEvent>;
+
+  // Patch an existing event (partial update — only provided fields are changed)
+  updateEvent(
+    calendarId: string,
+    accessToken: string,
+    eventId: string,
+    patch: Partial<CalendarEvent>,
   ): Promise<CalendarEvent>;
 
   deleteEvent(
     calendarId: string,
     accessToken: string,
-    eventId: string
+    eventId: string,
   ): Promise<void>;
 
   getFreeBusy(
     calendarId: string,
     accessToken: string,
     timeMin: string,
-    timeMax: string
+    timeMax: string,
   ): Promise<FreeBusySlot[]>;
 }
 

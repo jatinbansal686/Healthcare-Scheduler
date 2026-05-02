@@ -12,6 +12,9 @@ export interface TherapistProfile {
   specialties: string[];
   session_duration_minutes: number;
   availability_timezone: string;
+  // Calendar connection status (fetched alongside profile)
+  google_calendar_id: string | null;
+  calendar_connected: boolean;
 }
 
 export interface AppointmentInquiry {
@@ -58,6 +61,12 @@ export interface DashboardData {
   stats: DashboardStats;
 }
 
+export interface CalendarConnectResult {
+  success: boolean;
+  calendarId?: string;
+  error?: string;
+}
+
 export interface ITherapistService {
   /** Sign in with Supabase email+password */
   signIn(
@@ -79,4 +88,29 @@ export interface ITherapistService {
     session: Session,
     statusFilter?: string,
   ): Promise<DashboardData>;
+
+  /**
+   * Build the Google OAuth URL to redirect the therapist to.
+   * Encodes therapistId in the `state` param so we can retrieve it on callback.
+   */
+  buildGoogleOAuthUrl(therapistId: string): string;
+
+  /**
+   * Exchange the OAuth authorization code (from Google redirect) for tokens,
+   * then store them via the oauth-callback edge function.
+   */
+  exchangeOAuthCode(
+    session: Session,
+    code: string,
+    therapistId: string,
+    redirectUri: string,
+  ): Promise<CalendarConnectResult>;
+
+  /**
+   * Disconnect Google Calendar — clears tokens from DB.
+   */
+  disconnectGoogleCalendar(
+    session: Session,
+    therapistId: string,
+  ): Promise<void>;
 }

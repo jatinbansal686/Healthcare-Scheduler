@@ -2,15 +2,32 @@
 // supabase/functions/therapist-action/index.ts
 // Token-based confirm/reject — no login required.
 // Therapist clicks link in email → this function runs → redirects to result page.
+// On confirm: also updates the Google Calendar event from "tentative" → "confirmed".
+// On reject:  also deletes the Google Calendar event.
 // ============================================================
 
 import { handleCors, corsJson } from "../_shared/cors.ts";
 import { createLogger } from "../_shared/logger.ts";
 import { getSupabaseAdmin } from "../_shared/supabaseAdmin.ts";
+import { GoogleCalendarClient } from "../agent-chat/google/GoogleCalendarClient.ts";
+import { TokenRefresher } from "../agent-chat/google/tokenRefresher.ts";
 
 const logger = createLogger("TherapistActionFunction");
 
 const APP_URL = Deno.env.get("APP_URL") ?? "http://localhost:5173";
+
+// Instantiate calendar helpers once — they are stateless / env-driven
+const calendarClient = new GoogleCalendarClient();
+// TokenRefresher reads GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET from env.
+// If those vars are absent it throws at construction time — caught below.
+let tokenRefresher: TokenRefresher | null = null;
+try {
+  tokenRefresher = new TokenRefresher();
+} catch (e) {
+  logger.warn("TokenRefresher unavailable — calendar updates will be skipped", {
+    reason: (e as Error).message,
+  });
+}
 
 Deno.serve(async (req: Request) => {
   logger.info("therapist-action invoked", { method: req.method, url: req.url });
@@ -43,7 +60,7 @@ Deno.serve(async (req: Request) => {
     const { data: appointment, error: fetchError } = await supabase
       .from("appointments")
       .select(
-        "id, status, confirmation_token_expires_at, therapist_id, patient_identifier, start_time",
+        "id, status, confirmation_token_expires_at, therapist_id, patient_identifier, start_time, google_calendar_event_id",
       )
       .eq("confirmation_token", token)
       .single();
@@ -69,7 +86,6 @@ Deno.serve(async (req: Request) => {
       logger.warn("Confirmation token expired", {
         appointmentId: appointment.id,
       });
-      // Mark as cancelled_by_therapist due to timeout (same as auto-cancel)
       await supabase
         .from("appointments")
         .update({
@@ -78,6 +94,18 @@ Deno.serve(async (req: Request) => {
           therapist_rejection_reason: "Token expired — auto-cancelled",
         })
         .eq("id", appointment.id);
+
+      // Delete the tentative calendar event on expiry too (fire-and-forget)
+      if (appointment.google_calendar_event_id) {
+        deleteCalendarEventForTherapist(
+          supabase,
+          appointment.therapist_id,
+          appointment.google_calendar_event_id,
+        ).catch((e) =>
+          logger.error("Calendar delete on expiry failed (non-fatal)", { e }),
+        );
+      }
+
       return redirect(`${APP_URL}/therapist/action-result?status=expired`);
     }
 
@@ -103,8 +131,28 @@ Deno.serve(async (req: Request) => {
       return redirect(`${APP_URL}/therapist/action-result?status=error`);
     }
 
+    // ── Sync Google Calendar event (fire-and-forget) ───────
+    if (appointment.google_calendar_event_id) {
+      if (action === "confirm") {
+        confirmCalendarEvent(
+          supabase,
+          appointment.therapist_id,
+          appointment.google_calendar_event_id,
+        ).catch((e) =>
+          logger.error("Calendar confirm update failed (non-fatal)", { e }),
+        );
+      } else {
+        deleteCalendarEventForTherapist(
+          supabase,
+          appointment.therapist_id,
+          appointment.google_calendar_event_id,
+        ).catch((e) =>
+          logger.error("Calendar delete on reject failed (non-fatal)", { e }),
+        );
+      }
+    }
+
     // ── Send patient notification email ────────────────────
-    // Fire-and-forget — don't block the redirect
     notifyPatientOfOutcome(
       supabase,
       appointment.id,
@@ -138,6 +186,107 @@ function redirect(url: string): Response {
   });
 }
 
+// ── Fetch therapist calendar credentials ──────────────────
+async function getTherapistCalendarCreds(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  therapistId: string,
+): Promise<{ calendarId: string; refreshToken: string } | null> {
+  const { data, error } = await supabase
+    .from("therapists")
+    .select("google_calendar_id, google_refresh_token")
+    .eq("id", therapistId)
+    .single();
+
+  if (error || !data?.google_calendar_id || !data?.google_refresh_token) {
+    logger.warn(
+      "Therapist has no calendar credentials — skipping calendar op",
+      {
+        therapistId,
+      },
+    );
+    return null;
+  }
+
+  return {
+    calendarId: data.google_calendar_id,
+    refreshToken: data.google_refresh_token,
+  };
+}
+
+// ── Update calendar event to "confirmed" ──────────────────
+async function confirmCalendarEvent(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  therapistId: string,
+  calendarEventId: string,
+): Promise<void> {
+  if (!tokenRefresher) {
+    logger.warn("TokenRefresher not available — skipping calendar confirm");
+    return;
+  }
+
+  const creds = await getTherapistCalendarCreds(supabase, therapistId);
+  if (!creds) return;
+
+  const accessToken = await tokenRefresher.getAccessToken(creds.refreshToken);
+
+  await calendarClient.updateEvent(
+    creds.calendarId,
+    accessToken,
+    calendarEventId,
+    {
+      summary: (
+        await getEventSummary(creds, calendarEventId, accessToken)
+      ).replace("[PENDING] ", ""),
+      status: "confirmed",
+    },
+  );
+
+  logger.calendar("Calendar event confirmed", { calendarEventId });
+}
+
+// ── Helper: get current event summary to strip [PENDING] prefix ──
+async function getEventSummary(
+  creds: { calendarId: string },
+  calendarEventId: string,
+  accessToken: string,
+): Promise<string> {
+  try {
+    const events = await calendarClient.listEvents(
+      creds.calendarId,
+      accessToken,
+      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days back
+      new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year ahead
+    );
+    const event = events.find((e) => e.id === calendarEventId);
+    return event?.summary ?? "Therapy Session";
+  } catch {
+    return "Therapy Session";
+  }
+}
+
+// ── Delete calendar event (on reject/cancel/expiry) ───────
+async function deleteCalendarEventForTherapist(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  therapistId: string,
+  calendarEventId: string,
+): Promise<void> {
+  if (!tokenRefresher) {
+    logger.warn("TokenRefresher not available — skipping calendar delete");
+    return;
+  }
+
+  const creds = await getTherapistCalendarCreds(supabase, therapistId);
+  if (!creds) return;
+
+  const accessToken = await tokenRefresher.getAccessToken(creds.refreshToken);
+  await calendarClient.deleteEvent(
+    creds.calendarId,
+    accessToken,
+    calendarEventId,
+  );
+  logger.calendar("Calendar event deleted", { calendarEventId });
+}
+
 // ── Notify patient of outcome (fire-and-forget) ────────────
 async function notifyPatientOfOutcome(
   supabase: ReturnType<typeof getSupabaseAdmin>,
@@ -146,8 +295,6 @@ async function notifyPatientOfOutcome(
   startTime: string,
   action: string,
 ): Promise<void> {
-  // In a real system, look up patient email from inquiry.
-  // For now, we log — extend this when patient email is collected.
   logger.info("Patient notification queued", {
     appointmentId,
     patientIdentifier,
@@ -155,5 +302,4 @@ async function notifyPatientOfOutcome(
     startTime,
   });
   // TODO: When patient email collection is added, send outcome email here.
-  // Pattern is identical to notifyTherapist.tool.ts (use Resend).
 }

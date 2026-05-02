@@ -1,6 +1,7 @@
 // ============================================================
 // App.tsx — Root component with React Router DOM routes
-// Added: /therapist/login, /therapist/dashboard, /therapist/action-result
+// Added: /therapist/login, /therapist/dashboard, /therapist/action-result,
+//        /auth/google/callback (Google OAuth redirect handler)
 // Existing routes unchanged.
 // ============================================================
 
@@ -18,6 +19,9 @@ const TherapistDashboardPage = lazy(
 );
 const TherapistActionResultPage = lazy(
   () => import("./pages/TherapistActionResultPage"),
+);
+const GoogleOAuthCallbackPage = lazy(
+  () => import("./pages/GoogleOAuthCallbackPage"),
 );
 
 const CONTEXT = "App";
@@ -44,16 +48,21 @@ const App: React.FC = () => {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/admin" element={<AdminPage />} />
 
-          {/* ── Therapist routes (new) ── */}
+          {/* ── Therapist routes ── */}
           <Route path="/therapist/login" element={<TherapistLoginPage />} />
           <Route
             path="/therapist/dashboard"
             element={<TherapistDashboardPage />}
           />
-          {/* Result page after clicking confirm/reject link in email */}
           <Route
             path="/therapist/action-result"
             element={<TherapistActionResultPage />}
+          />
+
+          {/* Google OAuth redirect URI — must match Google Cloud Console registration */}
+          <Route
+            path="/auth/google/callback"
+            element={<GoogleOAuthCallbackPage />}
           />
 
           {/* Fallback */}

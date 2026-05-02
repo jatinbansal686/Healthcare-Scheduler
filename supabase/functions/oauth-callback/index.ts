@@ -22,6 +22,7 @@ Deno.serve(async (req: Request) => {
 
   if (req.method !== "POST") {
     return corsJson(
+      req,
       {
         success: false,
         error: { code: "METHOD_NOT_ALLOWED", message: "Only POST accepted" },
@@ -31,14 +32,16 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // ── Verify the request comes from an authenticated admin ──
+    // ── Verify the request comes from an authenticated therapist ──
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       throw new AuthError("Authorization header required");
     }
     const token = authHeader.slice(7);
     const user = await verifyUserToken(token);
-    logger.info("Admin authenticated for OAuth callback", { userId: user.id });
+    logger.info("Therapist authenticated for OAuth callback", {
+      userId: user.id,
+    });
 
     // ── Parse request body ────────────────────────────────────
     let body: unknown;
@@ -71,8 +74,6 @@ Deno.serve(async (req: Request) => {
     logger.info("Processing OAuth callback", { therapistId });
 
     // ── Exchange authorization code for tokens ────────────────
-    logger.calendar("Exchanging auth code for tokens at Google");
-
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
     const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET");
 
@@ -106,41 +107,28 @@ Deno.serve(async (req: Request) => {
     }
 
     const tokenData = await tokenResponse.json();
-    logger.calendar("Token exchange successful");
 
     if (!tokenData.refresh_token) {
-      logger.warn(
-        "No refresh_token in response — user may have already granted access",
-      );
       throw new CalendarError(
-        "Google did not return a refresh token. The user may need to revoke access and reconnect.",
+        "Google did not return a refresh token. Please revoke access at myaccount.google.com/permissions and try again.",
       );
     }
 
-    // ── Get the calendar ID (user's primary calendar = their email) ──
-    logger.calendar("Fetching user's calendar info");
-
+    // ── Get the calendar ID (primary = therapist's email) ─────
     const calendarResponse = await fetch(
       "https://www.googleapis.com/calendar/v3/users/me/calendarList/primary",
-      {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      },
+      { headers: { Authorization: `Bearer ${tokenData.access_token}` } },
     );
 
     let calendarId = "primary";
     if (calendarResponse.ok) {
       const calendarData = await calendarResponse.json();
       calendarId = calendarData.id ?? "primary";
-      logger.calendar("Got therapist calendar ID", { calendarId });
     } else {
       logger.warn("Could not fetch calendar ID — using 'primary' as fallback");
     }
 
-    // ── Store refresh token and calendar ID in DB ─────────────
-    logger.db("Storing Google Calendar credentials for therapist", {
-      therapistId,
-    });
-
+    // ── Store credentials in DB ───────────────────────────────
     const supabase = getSupabaseAdmin();
 
     const { error: updateError } = await supabase
@@ -152,9 +140,6 @@ Deno.serve(async (req: Request) => {
       .eq("id", therapistId);
 
     if (updateError) {
-      logger.error("Failed to save OAuth tokens to DB", {
-        error: updateError.message,
-      });
       throw new CalendarError(
         `Failed to save calendar credentials: ${updateError.message}`,
       );
@@ -165,7 +150,7 @@ Deno.serve(async (req: Request) => {
       calendarId,
     });
 
-    return corsJson({
+    return corsJson(req, {
       success: true,
       data: {
         message: "Google Calendar connected successfully",
@@ -177,6 +162,7 @@ Deno.serve(async (req: Request) => {
     logger.error("OAuth callback failed", err);
     const normalized = normalizeError(err);
     return corsJson(
+      req,
       {
         success: false,
         error: { code: normalized.code, message: normalized.message },

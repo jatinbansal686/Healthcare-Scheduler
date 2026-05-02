@@ -113,6 +113,34 @@ export class GoogleCalendarClient implements IGoogleCalendarClient {
     return created;
   }
 
+  // ── Patch an existing calendar event ─────────────────────
+  // Uses PATCH (partial update) — only provided fields are changed.
+  // Used by therapist-action to flip status from "tentative" → "confirmed".
+
+  async updateEvent(
+    calendarId: string,
+    accessToken: string,
+    eventId: string,
+    patch: Partial<CalendarEvent>,
+  ): Promise<CalendarEvent> {
+    logger.calendar("Patching calendar event", { calendarId, eventId, patch });
+
+    const encodedId = encodeURIComponent(calendarId);
+    const encodedEventId = encodeURIComponent(eventId);
+
+    const updated = await this.request<CalendarEvent>(
+      `/calendars/${encodedId}/events/${encodedEventId}`,
+      accessToken,
+      {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      },
+    );
+
+    logger.calendar("Event patched successfully", { eventId: updated.id });
+    return updated;
+  }
+
   // ── Delete a calendar event ───────────────────────────────
 
   async deleteEvent(
